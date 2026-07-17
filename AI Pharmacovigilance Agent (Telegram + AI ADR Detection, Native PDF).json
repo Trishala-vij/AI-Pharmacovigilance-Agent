@@ -1,0 +1,678 @@
+{
+  "name": "AI Pharmacovigilance Agent (Telegram + AI ADR Detection, Native PDF)",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {}
+      },
+      "id": "941f8846-79db-4f17-aae1-16cf68382433",
+      "name": "Telegram - New ADR Report",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -2336,
+        272
+      ],
+      "webhookId": "7543ee9a-4796-40aa-b3f4-ecedb7d818a4",
+      "credentials": {
+        "telegramApi": {
+          "id": "lgoGGxZ3WtU48qBh",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a1",
+              "name": "reportText",
+              "value": "={{ $json.message.text || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "a2",
+              "name": "chatId",
+              "value": "={{ $json.message.chat.id }}",
+              "type": "string"
+            },
+            {
+              "id": "a3",
+              "name": "reporterName",
+              "value": "={{ (($json.message.from.first_name || '') + ' ' + ($json.message.from.last_name || '')).trim() || 'Unknown reporter' }}",
+              "type": "string"
+            },
+            {
+              "id": "a4",
+              "name": "telegramMessageId",
+              "value": "={{ $json.message.message_id }}",
+              "type": "string"
+            },
+            {
+              "id": "a5",
+              "name": "receivedAt",
+              "value": "={{ $now.toISO() }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a68dc5a8-9a48-4706-ac2c-615e5bf470ee",
+      "name": "Extract Report Fields",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -2080,
+        272
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.reportText }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "bf1a109b-8917-402d-b222-d63815e30fb2",
+      "name": "Has Text Content?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -1824,
+        272
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "Thanks for reaching out. Please describe the suspected adverse drug reaction in a text message (drug name, symptoms, and when they started) so I can log it correctly for our drug safety team.",
+        "additionalFields": {}
+      },
+      "id": "60b59d6c-68cd-4065-a9ad-2b0e1ceb5894",
+      "name": "Request Text Description",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -1568,
+        464
+      ],
+      "webhookId": "8db9e205-8464-4cd8-805c-21c8bef7e1f6",
+      "credentials": {
+        "telegramApi": {
+          "id": "lgoGGxZ3WtU48qBh",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=You are a pharmacovigilance assistant reviewing a spontaneous adverse event report submitted via Telegram.\n\nReporter message:\n\"\"\"{{ $json.reportText }}\"\"\"\n\nAnalyze the message and return ONLY a valid JSON object (no markdown, no commentary, no code fences) with exactly these fields:\n{\n  \"drugName\": string (suspected drug/product name, or \"unspecified\" if not mentioned),\n  \"adverseReaction\": string (short plain-language description of the reaction/symptoms),\n  \"meddraPreferredTerm\": string (your best-guess MedDRA-style preferred term for the reaction),\n  \"severity\": one of \"Mild\", \"Moderate\", \"Serious\", \"Life-threatening\",\n  \"isAdverseEventDetected\": boolean (false if the message does not actually describe a drug-related adverse event),\n  \"confidence\": number between 0 and 1,\n  \"clinicalRationale\": string (1-2 sentences explaining the severity classification),\n  \"recommendedAction\": string (next step, e.g. \"Routine follow-up\", \"Escalate to safety physician within 24h\", \"Immediate medical review required\")\n}"
+      },
+      "id": "8bc7fb36-db36-48a5-98b1-51423fcdb4af",
+      "name": "Detect ADR & Classify Severity",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.6,
+      "position": [
+        -1568,
+        144
+      ]
+    },
+    {
+      "parameters": {
+        "model": "google/gemma-4-26b-a4b-it:free",
+        "options": {
+          "temperature": 0.2
+        }
+      },
+      "id": "e2595e78-00e9-49d7-a085-d866d48d8831",
+      "name": "OpenRouter Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+      "typeVersion": 1,
+      "position": [
+        -1568,
+        352
+      ],
+      "credentials": {
+        "openRouterApi": {
+          "id": "qVajyTH6KFuSe0fw",
+          "name": "OpenRouter account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const previous = $('Extract Report Fields').item.json;\nconst raw = $input.item.json.text || $input.item.json.output || '';\n\nfunction extractJson(str) {\n  const fenced = str.match(/```(?:json)?\\s*([\\s\\S]*?)```/i);\n  const candidate = fenced ? fenced[1] : str;\n  const start = candidate.indexOf('{');\n  const end = candidate.lastIndexOf('}');\n  if (start === -1 || end === -1) return null;\n  try {\n    return JSON.parse(candidate.slice(start, end + 1));\n  } catch (e) {\n    return null;\n  }\n}\n\nconst parsed = extractJson(raw) || {};\nconst validSeverities = ['Mild', 'Moderate', 'Serious', 'Life-threatening'];\nconst severity = validSeverities.includes(parsed.severity) ? parsed.severity : 'Unclassified';\nconst parseFailed = Object.keys(parsed).length === 0;\n\nconst result = {\n  reportId: `ADR-${previous.chatId}-${Date.now()}`,\n  timestamp: previous.receivedAt,\n  reporterName: previous.reporterName,\n  chatId: previous.chatId,\n  rawMessage: previous.reportText,\n  drugName: parsed.drugName || 'unspecified',\n  adverseReaction: parsed.adverseReaction || 'unspecified',\n  meddraPreferredTerm: parsed.meddraPreferredTerm || 'unspecified',\n  severity,\n  isAdverseEventDetected: parsed.isAdverseEventDetected === true,\n  confidence: typeof parsed.confidence === 'number' ? parsed.confidence : 0,\n  clinicalRationale: parseFailed ? 'AI response could not be parsed automatically; manual review required.' : (parsed.clinicalRationale || 'Not provided'),\n  recommendedAction: parseFailed ? 'Manual review required - AI parsing failed' : (parsed.recommendedAction || 'Manual review recommended'),\n  requiresUrgentAlert: severity === 'Serious' || severity === 'Life-threatening' || parseFailed\n};\n\nreturn [{ json: result }];"
+      },
+      "id": "a4d4320a-5684-40fc-9b65-18d9ea9a2bd1",
+      "name": "Parse & Validate AI Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1296,
+        144
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "mode": "url",
+          "value": "https://docs.google.com/spreadsheets/d/1jmcPlGS41KXkrx7G0Njm6Ii4r7DjdQF8odkMuqYKNr4/edit?gid=0#gid=0",
+          "__regex": "https:\\/\\/(?:drive|docs)\\.google\\.com(?:\\/.*|)\\/d\\/([0-9a-zA-Z\\-_]+)(?:\\/.*|)"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Sheet1",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "reportId": "={{ $json.reportId }}",
+            "timestamp": "={{ $json.timestamp }}",
+            "reporterName": "={{ $json.reporterName }}",
+            "chartId": "={{ $json.chatId }}",
+            "rawMessage": "={{ $json.rawMessage }}",
+            "drugName": "={{ $json.drugName }}",
+            "adverseReaction": "={{ $json.adverseReaction }}",
+            "meddraPreferredTerm": "={{ $json.meddraPreferredTerm }}",
+            "severity": "={{ $json.severity }}",
+            "confidence": "={{ $json.confidence }}",
+            "requiresUrgentAlert": "={{ $json.requiresUrgentAlert }}",
+            "recommendedAction": "={{ $json.recommendedAction }}",
+            "clinicalRationale": "={{ $json.clinicalRationale }}",
+            "AdverseEventDetected": "={{ $json.isAdverseEventDetected }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "reportId",
+              "displayName": "reportId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "timestamp",
+              "displayName": "timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "reporterName",
+              "displayName": "reporterName",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "chartId",
+              "displayName": "chartId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "rawMessage",
+              "displayName": "rawMessage",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "drugName",
+              "displayName": "drugName",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "adverseReaction",
+              "displayName": "adverseReaction",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "meddraPreferredTerm",
+              "displayName": "meddraPreferredTerm",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "severity",
+              "displayName": "severity",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "AdverseEventDetected",
+              "displayName": "AdverseEventDetected",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "confidence",
+              "displayName": "confidence",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "clinicalRationale",
+              "displayName": "clinicalRationale",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "recommendedAction",
+              "displayName": "recommendedAction",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "requiresUrgentAlert",
+              "displayName": "requiresUrgentAlert",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "f853810b-e51d-4cfd-b537-364e7548d4c2",
+      "name": "Log ADR Report to Google Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        -1040,
+        144
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "AO7WujhVy4aN28EK",
+          "name": "Google Sheets OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const previous = $('Parse & Validate AI Output').item.json;\n\nfunction esc(str) {\n  return String(str)\n    .replace(/\\\\/g, '\\\\\\\\')\n    .replace(/\\(/g, '\\\\(')\n    .replace(/\\)/g, '\\\\)')\n    .replace(/[^\\x20-\\x7E]/g, '?');\n}\n\nfunction wrap(text, maxChars) {\n  const words = String(text || '').split(/\\s+/).filter(Boolean);\n  const lines = [];\n  let current = '';\n  for (const word of words) {\n    const candidate = current ? current + ' ' + word : word;\n    if (candidate.length > maxChars) {\n      if (current) lines.push(current);\n      current = word;\n    } else {\n      current = candidate;\n    }\n  }\n  if (current) lines.push(current);\n  if (lines.length === 0) lines.push('');\n  return lines;\n}\n\nconst maxChars = 95;\n\nconst sections = [\n  { size: 16, lines: ['Pharmacovigilance Adverse Event Report'] },\n  { size: 10, lines: [''] },\n  { size: 11, lines: [`Report ID: ${previous.reportId}`] },\n  { size: 11, lines: [`Date/Time: ${previous.timestamp}`] },\n  { size: 11, lines: [`Reported By: ${previous.reporterName} (Telegram chat ${previous.chatId})`] },\n  { size: 10, lines: [''] },\n  { size: 13, lines: ['Suspected Product'] },\n  { size: 11, lines: wrap(previous.drugName, maxChars) },\n  { size: 10, lines: [''] },\n  { size: 13, lines: ['Adverse Reaction'] },\n  { size: 11, lines: wrap(previous.adverseReaction, maxChars) },\n  { size: 10, lines: [`MedDRA preferred term (AI estimate): ${previous.meddraPreferredTerm}`] },\n  { size: 10, lines: [''] },\n  { size: 13, lines: ['Severity Classification'] },\n  { size: 12, lines: [`${previous.severity}  (confidence: ${previous.confidence})`] },\n  { size: 11, lines: wrap(previous.clinicalRationale, maxChars) },\n  { size: 10, lines: [''] },\n  { size: 13, lines: ['Recommended Action'] },\n  { size: 11, lines: wrap(previous.recommendedAction, maxChars) },\n  { size: 10, lines: [''] },\n  { size: 13, lines: ['Original Report Text'] },\n  { size: 10, lines: wrap(previous.rawMessage, maxChars) },\n  { size: 10, lines: [''] },\n  { size: 8, lines: wrap('Generated automatically by the AI Pharmacovigilance Agent. This is a preliminary AI-assisted triage output and must be reviewed by qualified drug safety personnel before any regulatory action.', maxChars) }\n];\n\nconst leading = 14;\nconst streamParts = ['BT', '50 780 Td', `${leading} TL`];\nlet currentSize = 0;\nfor (const section of sections) {\n  if (section.size !== currentSize) {\n    streamParts.push(`/F1 ${section.size} Tf`);\n    currentSize = section.size;\n  }\n  for (const line of section.lines) {\n    streamParts.push(`(${esc(line)}) Tj`);\n    streamParts.push('T*');\n  }\n}\nstreamParts.push('ET');\nconst contentStream = streamParts.join('\\n');\n\nconst objects = [];\nobjects.push('<< /Type /Catalog /Pages 2 0 R >>');\nobjects.push('<< /Type /Pages /Kids [3 0 R] /Count 1 >>');\nobjects.push('<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>');\nobjects.push(`<< /Length ${Buffer.byteLength(contentStream, 'latin1')} >>\\nstream\\n${contentStream}\\nendstream`);\nobjects.push('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>');\n\nlet pdf = '%PDF-1.4\\n';\nconst offsets = [];\nobjects.forEach((obj, i) => {\n  offsets.push(Buffer.byteLength(pdf, 'latin1'));\n  pdf += `${i + 1} 0 obj\\n${obj}\\nendobj\\n`;\n});\n\nconst xrefOffset = Buffer.byteLength(pdf, 'latin1');\npdf += `xref\\n0 ${objects.length + 1}\\n0000000000 65535 f \\n`;\noffsets.forEach((offset) => {\n  pdf += `${String(offset).padStart(10, '0')} 00000 n \\n`;\n});\npdf += `trailer\\n<< /Size ${objects.length + 1} /Root 1 0 R >>\\nstartxref\\n${xrefOffset}\\n%%EOF`;\n\nconst pdfBase64 = Buffer.from(pdf, 'latin1').toString('base64');\n\nreturn [{\n  json: {\n    ...previous,\n    pdfBase64,\n    pdfFileName: `ADR_Report_${previous.reportId}.pdf`\n  }\n}];"
+      },
+      "id": "dd29e1f5-44c5-4de8-8515-15b9aede778f",
+      "name": "Generate PDF Report (Native)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -784,
+        144
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "toBinary",
+        "sourceProperty": "pdfBase64",
+        "options": {
+          "fileName": "={{ $json.pdfFileName }}",
+          "mimeType": "application/pdf"
+        }
+      },
+      "id": "3354c2a5-dcb1-4f6f-914a-9ac66887d1bb",
+      "name": "Convert PDF Base64 to File",
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [
+        -528,
+        144
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "combinator": "or",
+          "conditions": [
+            {
+              "id": "d1",
+              "leftValue": "={{ $('Parse & Validate AI Output').item.json.severity }}",
+              "rightValue": "Serious",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "d2",
+              "leftValue": "={{ $('Parse & Validate AI Output').item.json.severity }}",
+              "rightValue": "Life-threatening",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "760e9ef1-b6c1-4b1c-a419-02265420c6fa",
+      "name": "Requires Urgent Alert?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -256,
+        144
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "sendDocument",
+        "chatId": "1068202487",
+        "binaryData": true,
+        "additionalFields": {
+          "caption": "=🚨 URGENT ADR ALERT — {{ $('Parse & Validate AI Output').item.json.severity }}\nDrug: {{ $('Parse & Validate AI Output').item.json.drugName }}\nReaction: {{ $('Parse & Validate AI Output').item.json.adverseReaction }}\nReport ID: {{ $('Parse & Validate AI Output').item.json.reportId }}\nRecommended action: {{ $('Parse & Validate AI Output').item.json.recommendedAction }}"
+        }
+      },
+      "id": "20c88c7f-c7f2-488f-bf3e-d2a0e3f79179",
+      "name": "Send Urgent Alert to Safety Team",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "4e83bd08-816f-45a2-8844-523318e25b88",
+      "credentials": {
+        "telegramApi": {
+          "id": "lgoGGxZ3WtU48qBh",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "1068202487",
+        "text": "=📋 New ADR logged (non-urgent)\nSeverity: {{ $('Parse & Validate AI Output').item.json.severity }}\nDrug: {{ $('Parse & Validate AI Output').item.json.drugName }}\nReaction: {{ $('Parse & Validate AI Output').item.json.adverseReaction }}\nReport ID: {{ $('Parse & Validate AI Output').item.json.reportId }}\nFull PDF report saved and available in the tracking sheet workflow run.",
+        "additionalFields": {}
+      },
+      "id": "cd283170-720e-4bf1-abd7-c914640e3426",
+      "name": "Send Routine Notification to Safety Team",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        288
+      ],
+      "webhookId": "01d1d5ee-0350-484d-95da-dbcf4d10cd79",
+      "credentials": {
+        "telegramApi": {
+          "id": "lgoGGxZ3WtU48qBh",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "=1068202487",
+        "text": "=Thank you for your report. It has been logged (ID: {{ $('Parse & Validate AI Output').item.json.reportId }}) and classified as \"{{ $('Parse & Validate AI Output').item.json.severity }}\" severity. Our drug safety team will review it{{ $('Parse & Validate AI Output').item.json.severity === 'Serious' || $('Parse & Validate AI Output').item.json.severity === 'Life-threatening' ? ' urgently' : '' }}. This does not replace medical care — if you are experiencing a medical emergency, please contact emergency services immediately.",
+        "additionalFields": {}
+      },
+      "id": "1b3e1c88-388d-4cc2-a18f-ba4918d0e42f",
+      "name": "Send Acknowledgement to Reporter",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        272,
+        144
+      ],
+      "webhookId": "7ce17529-382e-436d-b64c-86dd800a1057",
+      "credentials": {
+        "telegramApi": {
+          "id": "lgoGGxZ3WtU48qBh",
+          "name": "Telegram account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Telegram - New ADR Report": {
+      "main": [
+        [
+          {
+            "node": "Extract Report Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Report Fields": {
+      "main": [
+        [
+          {
+            "node": "Has Text Content?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Text Content?": {
+      "main": [
+        [
+          {
+            "node": "Detect ADR & Classify Severity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Request Text Description",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenRouter Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Detect ADR & Classify Severity",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Detect ADR & Classify Severity": {
+      "main": [
+        [
+          {
+            "node": "Parse & Validate AI Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse & Validate AI Output": {
+      "main": [
+        [
+          {
+            "node": "Log ADR Report to Google Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log ADR Report to Google Sheets": {
+      "main": [
+        [
+          {
+            "node": "Generate PDF Report (Native)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate PDF Report (Native)": {
+      "main": [
+        [
+          {
+            "node": "Convert PDF Base64 to File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Convert PDF Base64 to File": {
+      "main": [
+        [
+          {
+            "node": "Requires Urgent Alert?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Requires Urgent Alert?": {
+      "main": [
+        [
+          {
+            "node": "Send Urgent Alert to Safety Team",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Routine Notification to Safety Team",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Urgent Alert to Safety Team": {
+      "main": [
+        [
+          {
+            "node": "Send Acknowledgement to Reporter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Routine Notification to Safety Team": {
+      "main": [
+        [
+          {
+            "node": "Send Acknowledgement to Reporter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "8ccbbcc5-9e57-46d2-90f6-44f2e81c9fb6",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "843c9dd1a51511e9a273ab58ab4b7a599b0668077368113468e36fc7fbe174de"
+  },
+  "nodeGroups": [],
+  "id": "hikF5yHPlHwxVVRm",
+  "tags": []
+}
